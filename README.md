@@ -8,4 +8,4 @@ where XX - CATIA version number (B15, B19 etc).
 ![Preview image](https://github.com/Lab-V/CATIA_GOST_FTB/blob/main/GOSTFTB2.png)
 
 You can find more examples on the forum:
-[More info](http://www.plm-forum.ru)
+[plm-forum.ru](http://www.plm-forum.ru)
