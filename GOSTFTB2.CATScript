@@ -1,0 +1,824 @@
+Option Explicit
+
+'	COPYRIGHT DASSAULT SYSTÈMES 2007
+' 	****************************************************************************
+' 	Purpose			:	To draw a Frame and TitleBlock according with Russian factory standards
+' 	Author			:	Ilias Ilmambetov - lab.virtuosity.ru
+'	Based on		:	V5Automation guide and online forums
+' 	Languages		:	VBScript
+' 	CATIA Level		:	V5R15
+' 	Reg. Settings	:	Russian
+'	Revision		:	20070730
+' 	****************************************************************************
+
+
+'	DEFINE PROPERTIES
+' 	****************************************************************************
+'	Variable names created by Naming Conventions in V5Automation guide:
+'	prefix o- mean Object, d- Double, s- String
+' 	****************************************************************************
+
+Public oDocument			As DrawingDocument
+Public oSelection			As Selection
+Public oSheets				As DrawingSheets
+Public oSheet				As DrawingSheet
+Public oViews				As DrawingViews
+Public oView				As DrawingView
+Public oOrientation			As CatPaperOrientation
+Public oDrwTexts			As DrawingTexts
+Public oText				As DrawingText
+
+Public oFactory				As Factory2D
+Public oLine				As Line2D
+
+Public oGeomElements		As GeometricElements
+Public sFormatName 			As String		'Sheet format name by Standard - need V5R14 or higher
+
+Public dWidth				As Double	'Sheet width
+Public dHeight				As Double	'Sheet height
+
+Public dFRAME_X				As Double	'Frame start point X
+Public dFRAME_Y				As Double	'Frame start point Y
+Public dMAIN_X				As Double	'Main table (drawing title) start pointX
+Public dMAIN_Y				As Double	'Main table (drawing title) start point Y
+Public dLEFT_X				As Double	'Left table (drawing copy info) start point X
+Public dLEFT_Y				As Double	'Left table (drawing copy info) start point Y
+Public dTOP_X				As Double	'Top table (drawing id copy) start point X
+Public dTOP_Y				As Double	'Top table (drawing id copy) start point Y
+
+Const MacroID = "GOST_FTB"
+
+Public aNotifyText			As Array
+Public aNotifyIcon			As Array
+aNotifyText = Array("Рамка и штамп уже созданы", "Внимание!"&Chr(10)&"Для рамки и штампа использовался другой макрос", "Внимание!"&Chr(10)&"Сначала необходимо создать рамку и штамп - команда 'Add'", "Размеры листа не изменились", "Внимание!"&Chr(13)&"Для этого макроса требуется создать чертежный документ (Drawing)", "Внимание!"&Chr(13)&"В чертежном документе нет видов, связанных с 3Д моделью", "Внимание!"&Chr(13)&"Для 3Д модели не определен материал"&Chr(13)&"Значения 'Материал' и 'Масса' не определены", "Внимание!"&Chr(10)&"Пользовательские параметры не определены")
+aNotifyIcon = Array(vbInformation, vbExclamation, vbExclamation, vbInformation, vbExclamation, vbExclamation, vbExclamation, vbExclamation)
+
+
+'	CORE METHODS - UserNotify
+' 	****************************************************************************
+'	Shows message box with predefined text for some events
+' 	****************************************************************************
+Sub UserNotify(iNotifyID As Integer)
+	MsgBox aNotifyText(iNotifyID), aNotifyIcon(iNotifyID), "CATScript Message:"
+End Sub
+
+
+'	CORE METHODS - WriteText
+' 	****************************************************************************
+'	Add text string object with predefined parameters
+' 	****************************************************************************
+Sub WriteText(textName, textValue, anchorPos As String, textSize, textX, textY, textAngle, wrapWidth, textAlign As Double)
+	Set oText = oDrwTexts.Add(textValue, textX, textY)
+	oText.Name = textName
+	oText.SetFontSize  0, 0, textSize
+	oText.Angle = textAngle
+	oText.AnchorPosition = anchorPos
+	oText.FrameType = catRectangle		' static property
+	oText.WrappingWidth = wrapWidth	' if wrapWidth = 0 - no wrap
+	oText.SetParameterOnSubString catAlignment, 0, 0, textAlign		' in future: textAlign = 0 - left, 1 - center, 2 - right
+End Sub
+
+
+'	CORE METHODS - DrawLine
+' 	****************************************************************************
+'	Add line object with predefined parameters
+' 	****************************************************************************
+Sub DrawLine(lineName As String, startX, startY, endX, endY, lineW As Double)
+	Set oLine = oFactory.CreateLine(startX, startY, endX, endY)
+	oLine.Name = lineName
+	oSelection.Clear
+	oSelection.Add(oLine)
+	oSelection.VisProperties.SetRealWidth lineW, 1
+	oSelection.Clear
+End Sub
+
+
+'	CORE METHODS - CATInit
+' 	****************************************************************************
+'	Set variables
+' 	****************************************************************************
+Sub CATInit()
+	Set oDocument = CATIA.ActiveDocument
+	Set oSheets = oDocument.Sheets
+	Set oSheet = oDocument.Sheets.ActiveSheet
+	Set oSelection = oDocument.Selection
+	Set oViews = oSheet.Views
+	Set oView  = oViews.ActiveView
+	Set oDrwTexts = oView.Texts
+
+	Set oFactory = oView.Factory2D
+	Set oGeomElements = oView.GeometricElements
+
+	dWidth = oSheet.GetPaperWidth
+	dHeight = oSheet.GetPaperHeight
+	oOrientation = oSheet.Orientation
+	sFormatName = oSheet.PaperName
+
+	dMAIN_X = dWidth - 190
+	dMAIN_Y = 5
+
+	dFRAME_X = 20
+	dFRAME_Y = 5
+
+	dLEFT_X = 8
+	dLEFT_Y = 5
+End Sub
+
+
+'	CORE METHODS - CATExit
+' 	****************************************************************************
+'	Save edition in order to register modification for UNDO/REDO
+' 	****************************************************************************
+Sub CATExit()
+	oView.SaveEdition
+End Sub
+
+
+'	CORE METHODS - CATMain
+' 	****************************************************************************
+'	Invoked on script start
+' 	****************************************************************************
+Sub CATMain()
+	If (IsDrawingDocument()) Then	
+		CATInit
+
+		If (BackgroundIsEmpty()) Then
+			CATDrw_Add
+		Else
+			If (CheckMacroID()) Then
+				CATDrw_Resize
+				CATDrw_Update
+			Else
+				UserNotify 1
+			End If
+		End If
+		CATExit
+	Else
+		UserNotify 4
+		Exit Sub
+	End If
+End Sub
+
+
+'	USER INTERACT METHODS - CATDrw_Add
+' 	****************************************************************************
+'	Add frame and title block
+' 	****************************************************************************
+Sub CATDrw_Add()
+	CATInit
+	If (BackgroundIsEmpty()) Then
+		AddMacroID
+		DrawFrame
+		DrawLeft
+		DrawTop
+		WriteTopText
+		DrawMainTable
+		WriteMainTexts
+		AssignParameters
+	Else
+		If (CheckMacroID()) Then
+			UserNotify 0
+		Else
+			UserNotify 1
+		End If
+		Exit Sub
+	End If
+	CATExit
+End Sub
+
+
+'	USER INTERACT METHODS - CATDrw_Resize
+' 	****************************************************************************
+'	Resize frame and title block
+' 	****************************************************************************
+Sub CATDrw_Resize()
+	CATInit
+	If (BackgroundIsEmpty()) Then
+		UserNotify 2
+		Exit Sub
+	Else
+		If (CheckMacroID()) Then
+			' CHECK CHEET SIZE AND ORIENTATION - IF NOT CHANGED - EXIT:
+			
+			If (OffsetX() <> 0 Or OffsetY() <> 0) Then
+				MoveMain(OffsetX())
+				RedrawFrame
+				RedrawTop
+				MoveTopText
+				AssignParameters
+			Else
+				UserNotify 3
+			End If
+		Else
+			UserNotify 1
+			Exit Sub
+		End If
+	End If
+	CATExit	
+End Sub
+
+
+'	USER INTERACT METHODS - CATDrw_Update
+' 	****************************************************************************
+'	Update frame and title block
+' 	****************************************************************************
+Sub CATDrw_Update()
+	CATInit
+	If (BackgroundIsEmpty()) Then
+		Exit Sub
+	Else
+		If (CheckMacroID()) Then
+			' UPDATE ALL LINKED PARAMETERS
+			AssignParameters
+		Else
+			UserNotify 1
+			Exit Sub
+		End If
+	End If
+	CATExit	
+End Sub
+
+
+'	USER INTERACT METHODS - CATDrw_Remove
+' 	****************************************************************************
+'	Delete frame and title block
+' 	****************************************************************************
+Sub CATDrw_Remove()
+	CATInit
+	If (BackgroundIsEmpty()) Then
+		Exit Sub
+	Else
+		RemoveAllText
+		RemoveGeometry
+	End If
+	CATExit
+End Sub
+
+
+'	SUPPORT METHODS - IsDrawingDocument
+' 	****************************************************************************
+'	Check for active document type
+' 	****************************************************************************
+Function IsDrawingDocument() As Boolean
+	If (TypeName(CATIA.ActiveDocument) = "DrawingDocument") Then
+		IsDrawingDocument = True
+	Else
+		IsDrawingDocument = False
+	End If
+End Function
+
+
+'	SUPPORT METHODS - BackgroundIsEmpty
+' 	****************************************************************************
+'	Check content in Background for select right action in CATMain - Add or Resize content
+' 	****************************************************************************
+Function BackgroundIsEmpty() As Boolean
+	Dim dTotalGeom	As Double
+	Dim dTotalText	As Double
+	dTotalGeom = oGeomElements.Count
+	dTotalText = oDrwTexts.Count
+
+	If (dTotalText <> 0 And dTotalGeom <> 0) Then
+		BackgroundIsEmpty = False
+	Else
+		BackgroundIsEmpty = True
+	End If
+End Function
+
+
+'	SUPPORT METHODS - AddMacroID
+' 	****************************************************************************
+'	Add text reference for Macro identification
+' 	****************************************************************************
+Sub AddMacroID()
+	WriteText MacroID, "CATIA V5R15 ГОСТ 2.104-68 ред. 1995 г.", catBottomLeft, 2.5, 20, 1, 0, 0, 0
+End Sub
+
+
+'	SUPPORT METHODS - CheckMacroID
+' 	****************************************************************************
+'	Check reference for Macro identification
+' 	****************************************************************************
+Function CheckMacroID() As Boolean
+	Dim dTotalText	As Double
+	Dim dStep		As Double
+	Dim oCheckText	As Object
+
+	dTotalText = oDrwTexts.Count
+	dStep = 0
+
+	While (dStep < dTotalText)
+		dStep = dStep + 1
+		Set oCheckText = oDrwTexts.Item(dStep)
+		If (oCheckText.Name = MacroID) Then
+			CheckMacroID = True
+			Exit Function
+		End If
+	Wend
+	CheckMacroID = False
+End Function
+
+
+'	SUPPORT METHODS - OffsetX
+' 	****************************************************************************
+'	Calc OffsetX for Resize Method
+' 	****************************************************************************
+Function OffsetX() As Double
+	Dim oBaseLine	As Line2D
+	Dim aOrigin(2)	As Array
+	
+	Set oBaseLine = oGeomElements.Item("frame_line_3")
+	oBaseLine.GetOrigin(aOrigin)
+
+	OffsetX = dWidth - 5 - aOrigin(0)
+End Function
+
+
+'	SUPPORT METHODS - OffsetY
+' 	****************************************************************************
+'	Calc OffsetY for Resize Method
+' 	****************************************************************************
+Function OffsetY() As Double
+	Dim oBaseLine	As Line2D
+	Dim aOrigin(2)	As Array
+	
+	Set oBaseLine = oGeomElements.Item("frame_line_2")
+	oBaseLine.GetOrigin(aOrigin)
+
+	OffsetY = dHeight - 5 - aOrigin(1)
+End Function
+
+
+'	SUPPORT METHODS - TopPositionMode
+' 	****************************************************************************
+'	Check sheet orientation for drawing top table
+' 	****************************************************************************
+Function TopPositionMode() As Integer
+	If (oOrientation = 1) Then
+		TopPositionMode = 1
+	Else
+		If (sFormatName = "A4") Then
+			TopPositionMode = 1
+		Else
+			TopPositionMode = 2
+		End If
+	End If
+End Function
+
+
+'	SUPPORT METHODS - SheetScale
+' 	****************************************************************************
+'	Return sheet scale factor for drawing
+' 	****************************************************************************
+Function SheetScale() As String
+	Dim dScale As Double
+	dScale = oSheet.Scale
+	If (dScale > 1) Then
+		SheetScale = CStr(dScale)&" : 1"
+	Else
+		SheetScale = "1 : "&CStr(1/dScale)
+	End If
+End Function
+
+
+
+'	BASIC METHODS - DrawFrame
+' 	****************************************************************************
+'	Draw frame border - clockwize direction
+' 	****************************************************************************
+Sub DrawFrame()
+	DrawLine "frame_line_1", dFRAME_X, dFRAME_Y, dFRAME_X, dHeight - 5, 2
+	DrawLine "frame_line_2", dFRAME_X, dHeight - 5, dWidth - 5, dHeight - 5, 2
+	DrawLine "frame_line_3", dWidth - 5, dHeight - 5, dWidth - 5, dFRAME_Y, 2
+	DrawLine "frame_line_4", dWidth - 5, dFRAME_Y, dFRAME_X, dFRAME_Y, 2
+End Sub
+
+
+Sub RedrawFrame()
+	Dim i		As Integer
+	Dim objLine	As Line2D
+	If (Not BackgroundIsEmpty()) Then
+		oSelection.Clear
+		For i = 1 To 4
+			Set objLine = oGeomElements.Item("frame_line_"&i)
+			oSelection.Add(objLine)
+		Next
+    	oSelection.Delete
+	End If
+	DrawFrame
+End Sub
+
+
+'	BASIC METHODS - DrawLeft
+' 	****************************************************************************
+'	Draw left table
+' 	****************************************************************************
+Sub DrawLeft()
+	Dim i				As Integer
+	Dim j				As Integer
+	Dim k				As Integer
+	Dim sLineName		As String
+	Dim sTextName		As String
+	Dim dLEFT_W			As Double
+	Dim dLEFT_H			As Double
+	Dim dLEFT_TEXTX		As Double
+	Dim aLEFT_OFFSETX	As Array
+	Dim aLEFT_OFFSETY	As Array
+	Dim aLeftCellNames	As Array
+	Dim aLeftCellTextY	As Array
+
+	dLEFT_W = 12
+	dLEFT_H = 145
+
+	aLEFT_OFFSETX = Array(dLEFT_X, dLEFT_X + 5)
+	aLEFT_OFFSETY = Array(dLEFT_Y, dLEFT_Y + 25, dLEFT_Y + 60, dLEFT_Y + 85, dLEFT_Y + 110, dLEFT_Y + 145)
+
+	aLeftCellNames = Array("Инв. No подл.", "Подпись и дата", "Взам. инв. No", "Инв. No дубл.", "Подпись и дата")
+	aLeftCellTextY = Array(17.5, 47.5, 77.5, 102.5, 132.5)
+
+	dLEFT_TEXTX = 13
+
+	' DRAW V-LINES
+	For i = 0 To 1
+		sLineName = "left_line_"&(i+1)
+		DrawLine sLineName, aLEFT_OFFSETX(i), dLEFT_Y, aLEFT_OFFSETX(i), dLEFT_Y+dLEFT_H, 2
+	Next
+	
+	' DRAW H-LINES
+	For j = 0 To 5
+		sLineName = "left_line_"&(j+3)
+		DrawLine sLineName, dLEFT_X, aLEFT_OFFSETY(j), dLEFT_X+dLEFT_W, aLEFT_OFFSETY(j), 2
+	Next
+
+	' WRITE TEXTS
+	For k = 0 To 4
+		sTextName = "left_text_"&(k+1)
+		WriteText sTextName, aLeftCellNames(k), catBottomCenter, 2.5, dLEFT_TEXTX, aLeftCellTextY(k), 90, 0, 0
+	Next
+End Sub
+
+
+'	BASIC METHODS - DrawTopAtPosition1
+' 	****************************************************************************
+'	Draw top table for landscape orientation or A4
+' 	****************************************************************************
+Sub DrawTopAtPosition1()
+	DrawLine "top_line_1", 20, dHeight - 19, 90, dHeight - 19, 2
+	DrawLine "top_line_2", 90, dHeight - 5, 90, dHeight - 19, 2
+End Sub
+
+Sub WriteTopTextAtPosition1()
+	WriteText "top_text_1", "$objectCode", catMiddleCenter, 3.5, 55, dHeight - 12, 180, 60, 1
+End Sub
+
+
+'	BASIC METHODS - DrawTopAtPosition2
+' 	****************************************************************************
+'	Draw top table for landscape orientation or A4
+' 	****************************************************************************
+Sub DrawTopAtPosition2()
+	DrawLine "top_line_1", dWidth - 19, dHeight - 5, dWidth - 19, dHeight - 75, 2
+	DrawLine "top_line_2", dWidth - 19, dHeight - 75, dWidth - 5, dHeight - 75, 2
+End Sub
+
+Sub WriteTopTextAtPosition2()
+	WriteText "top_text_1", "$objectCode", catMiddleCenter, 3.5, dWidth - 12, dHeight - 40, 90, 60, 1
+End Sub
+
+
+'	BASIC METHODS - DrawTop
+' 	****************************************************************************
+'	Draw top table by sheet orientation
+' 	****************************************************************************
+Sub DrawTop()
+	If (TopPositionMode() = 1) Then
+		DrawTopAtPosition1
+	Else
+		DrawTopAtPosition2
+	End If
+End Sub
+
+
+'	BASIC METHODS - WriteTopText
+' 	****************************************************************************
+'	Write top text by sheet orientation
+' 	****************************************************************************
+Sub WriteTopText()
+	If (TopPositionMode() = 1) Then
+		WriteTopTextAtPosition1
+	Else
+		WriteTopTextAtPosition2
+	End If
+End Sub
+
+
+'	BASIC METHODS - DrawMainTable
+' 	****************************************************************************
+'	Draw main table
+' 	****************************************************************************
+Sub DrawMainTable()
+	Dim aMAIN_OFFSETX	As Array
+	Dim aMAIN_OFFSETY	As Array
+	Dim i				As Integer
+	Dim j				As Integer
+	Dim k				As Integer
+	Dim sLineName		As String
+	Dim dMAIN_W			As Double
+	Dim dMAIN_H			As Double
+
+	aMAIN_OFFSETX = Array(dMAIN_X, dMAIN_X + 17, dMAIN_X + 40, dMAIN_X + 55)
+	aMAIN_OFFSETY = Array(dMAIN_Y, dMAIN_Y + 15, dMAIN_Y + 40, dMAIN_Y + 63)
+	dMAIN_W = 185
+	dMAIN_H = 55
+
+	' DRAW V_LINES
+	For i = 0 To 3
+		sLineName = "main_line_"&(i+1)
+		DrawLine sLineName, aMAIN_OFFSETX(i), dMAIN_Y, aMAIN_OFFSETX(i), dMAIN_Y+dMAIN_H, 2
+	Next
+
+	' DRAW H_LINES
+	For j = 1 To 3
+		sLineName = "main_line_"&(j+4)
+		DrawLine sLineName, dMAIN_X+65, aMAIN_OFFSETY(j), dMAIN_X+dMAIN_W, aMAIN_OFFSETY(j), 2
+	Next
+
+	DrawLine "main_line_8", dMAIN_X+65, dMAIN_Y, dMAIN_X+65, dMAIN_Y+dMAIN_H+8, 2
+	DrawLine "main_line_9", dMAIN_X, dMAIN_Y+dMAIN_H, dMAIN_X+dMAIN_W, dMAIN_Y+dMAIN_H, 2
+	DrawLine "main_line_10", dMAIN_X+7, dMAIN_Y+30, dMAIN_X+7, dMAIN_Y+dMAIN_H, 2
+	DrawLine "main_line_11", dMAIN_X+135, dMAIN_Y, dMAIN_X+135, dMAIN_Y+40, 2
+	DrawLine "main_line_12", dMAIN_X+135, dMAIN_Y+35, dMAIN_X+dMAIN_W, dMAIN_Y+35, 2
+	DrawLine "main_line_13", dMAIN_X+135, dMAIN_Y+20, dMAIN_X+dMAIN_W, dMAIN_Y+20, 2
+	DrawLine "main_line_14", dMAIN_X+150, dMAIN_Y+40, dMAIN_X+150, dMAIN_Y+20, 2
+	DrawLine "main_line_15", dMAIN_X+167, dMAIN_Y+40, dMAIN_X+167, dMAIN_Y+20, 2
+	DrawLine "main_line_16", dMAIN_X+155, dMAIN_Y+20, dMAIN_X+155, dMAIN_Y+15, 2
+
+	' DRAW THIN LINES
+	For k = 1 To 10
+		sLineName = "main_line_"&(k+16)
+		If ((k >= 6) And (k < 8)) Then
+			DrawLine sLineName, dMAIN_X, dMAIN_Y+5*k, dMAIN_X+65, dMAIN_Y+5*k, 2
+		Else
+			DrawLine sLineName, dMAIN_X, dMAIN_Y+5*k, dMAIN_X+65, dMAIN_Y+5*k, 1
+		End If
+	Next
+
+	DrawLine "main_line_27", dMAIN_X+140, dMAIN_Y+35, dMAIN_X+140, dMAIN_Y+20, 1
+	DrawLine "main_line_28", dMAIN_X+145, dMAIN_Y+35, dMAIN_X+145, dMAIN_Y+20, 1
+
+End Sub
+
+
+'	BASIC METHODS - WriteMainTexts
+' 	****************************************************************************
+'	Write all texts for main table
+' 	****************************************************************************
+Sub WriteMainTexts()
+	' ADD STATIC TEXTS
+	WriteText "main_text_1", "Изм.", catBottomCenter, 2.5, dMAIN_X+3.5, dMAIN_Y +30, 0, 0, 0
+	WriteText "main_text_2", "Лист", catBottomCenter, 2.5, dMAIN_X+12, dMAIN_Y +30, 0, 0, 0
+	WriteText "main_text_3", "No докум.", catBottomCenter, 2.5, dMAIN_X+28.5, dMAIN_Y +30, 0, 0, 0
+	WriteText "main_text_4", "Подпись", catBottomCenter, 2.5, dMAIN_X+47.5, dMAIN_Y +30, 0, 0, 0
+	WriteText "main_text_5", "Дата", catBottomCenter, 2.5, dMAIN_X+60, dMAIN_Y +30, 0, 0, 0
+	WriteText "main_text_6", "Лит.", catBottomCenter, 2.5, dMAIN_X+142.5, dMAIN_Y +35, 0, 0, 0
+	WriteText "main_text_7", "Масса", catBottomCenter, 2.5, dMAIN_X+158.5, dMAIN_Y +35, 0, 0, 1
+	WriteText "main_text_8", "Масштаб", catBottomCenter, 2.5, dMAIN_X+176, dMAIN_Y +35, 0, 0, 1
+	WriteText "main_text_11", "Разраб.", catBottomLeft, 2.5, dMAIN_X+1, dMAIN_Y +25, 0, 0, 0
+	WriteText "main_text_12", "Пров.", catBottomLeft, 2.5, dMAIN_X+1, dMAIN_Y +20, 0, 0, 0
+	WriteText "main_text_13", "Т. контр.", catBottomLeft, 2.5, dMAIN_X+1, dMAIN_Y +15, 0, 0, 0
+	WriteText "main_text_14", "Н. контр", catBottomLeft, 2.5, dMAIN_X+1, dMAIN_Y +5, 0, 0, 0
+	WriteText "main_text_15", "Утв.", catBottomLeft, 2.5, dMAIN_X+1, dMAIN_Y, 0, 0, 0
+	WriteText "main_text_16", "Копировал", catBottomCenter, 2.5, dMAIN_X+90, dMAIN_Y - 4, 0, 0, 0
+	
+	' ADD DYNAMIC TEXTS
+	WriteText "main_text_9", "Лист", catBottomCenter, 2.5, dMAIN_X+145, dMAIN_Y +15, 0, 15, 1
+	WriteText "main_text_10", "Листов", catBottomCenter, 2.5, dMAIN_X+170, dMAIN_Y +15, 0, 15, 1
+	WriteText "main_text_17", "Формат "&sFormatName, catBottomCenter, 2.5, dMAIN_X+160, dMAIN_Y - 4, 0, 20, 0
+	WriteText "main_text_18", "$developedBy", catBottomLeft, 2.5, dMAIN_X+18, dMAIN_Y + 25, 0, 24, 0
+	WriteText "main_text_19", "$checkedBy", catBottomLeft, 2.5, dMAIN_X+18, dMAIN_Y + 20, 0, 24, 0
+	WriteText "main_text_20", "$rulesConformBy", catBottomLeft, 2.5, dMAIN_X+18, dMAIN_Y + 5, 0, 24, 0
+	WriteText "main_text_21", "$approvedBy", catBottomLeft, 2.5, dMAIN_X+18, dMAIN_Y, 0, 24, 0
+	WriteText "main_text_22", "$objectName", catMiddleCenter, 2.5, dMAIN_X+125, dMAIN_Y + 59, 0, 100, 1
+	WriteText "main_text_23", "$objectCode", catMiddleCenter, 3.5, dMAIN_X+125, dMAIN_Y + 47.5, 0, 100, 1
+	WriteText "main_text_24", "$objectDescr", catTopLeft, 2.5, dMAIN_X+67, dMAIN_Y + 39, 0, 65, 0
+	WriteText "main_text_25", "$material", catTopLeft, 2.5, dMAIN_X+67, dMAIN_Y + 10, 0, 65, 0
+	WriteText "main_text_26", "$weight", catMiddleCenter, 2.5, dMAIN_X+158.5, dMAIN_Y + 27.5, 0, 10, 1
+	WriteText "main_text_27", "$scale", catMiddleCenter, 2.5, dMAIN_X+176, dMAIN_Y + 27.5, 0, 10, 1
+	WriteText "main_text_28", "$companyName", catTopCenter, 2.5, dMAIN_X+160, dMAIN_Y + 10, 0, 50, 1
+
+End Sub
+
+
+'	BASIC METHODS - AssignParameters
+' 	****************************************************************************
+'	Write drawing/model/user defined parameters. These parameters implemented in default ProductObject file,
+'	that used for creating new product - File/New From ..
+' 	****************************************************************************
+Sub AssignParameters()
+	Dim oTargetView			As DrawingView
+	Dim oProductSourse		As Document
+	Dim oParameters			As Parameters
+
+	Dim sMaterial			As String
+	Dim sMass				As String
+	Dim sMyValue			As String
+
+	Dim i					As Integer
+	Dim iTotalViews			As Integer
+	Dim iTotalParameters	As Integer
+
+	Dim iSheet				As Integer
+	Dim iTotalSheets		As Integer
+
+
+	If (IsDrawingDocument()) Then
+		' DRAWING FEATURES:
+		' "Формат А##"
+		oDrwTexts.GetItem("main_text_17").Text = "Формат "&sFormatName
+
+		' "Масштаб"
+		oDrwTexts.GetItem("main_text_27").Text = SheetScale()
+
+		' UPDATE SHEET NUMBER
+		iTotalSheets = oSheets.Count
+
+		If (Not oSheet.IsDetail) Then
+			For iSheet = 1 To iTotalSheets
+				If (Not oSheets.Item(iSheet).IsDetail) Then
+					oSheets.Item(iSheet).Views.Item(2).Texts.GetItem("main_text_9").Text = "Лист "&CStr(iSheet)
+					oSheets.Item(iSheet).Views.Item(2).Texts.GetItem("main_text_10").Text = "Листов "&CStr(iTotalSheets)
+				End If
+			Next
+		End If
+
+		' OTHER FEATURES
+		iTotalViews = oViews.Count
+
+		For i = 1 To iTotalViews
+			Set oTargetView = oViews.Item(i)
+			If (oTargetView.isGenerative) Then
+				' SET PRODUCT SOURSE BY FIRST VIEW, THAT ADDED TO SHEET
+				Set oProductSourse = oTargetView.GenerativeBehavior.Document
+				Set oParameters = oProductSourse.UserRefProperties
+				iTotalParameters = oParameters.Count
+
+				' GET USER PARAMETERS
+				If (iTotalParameters = 0) Then
+					UserNotify 7
+				Else
+					' WRITE USER FEATURES
+					oDrwTexts.GetItem("main_text_18").Text = oParameters.Item("$developedBy").ValueAsString
+					oDrwTexts.GetItem("main_text_19").Text = oParameters.Item("$checkedBy").ValueAsString
+					oDrwTexts.GetItem("main_text_20").Text = oParameters.Item("$rulesConformBy").ValueAsString
+					oDrwTexts.GetItem("main_text_21").Text = oParameters.Item("$approvedBy").ValueAsString
+					oDrwTexts.GetItem("main_text_22").Text = oParameters.Item("$objectName").ValueAsString
+					oDrwTexts.GetItem("main_text_23").Text = oParameters.Item("$objectCode").ValueAsString
+					oDrwTexts.GetItem("main_text_24").Text = oParameters.Item("$objectDescr").ValueAsString
+					oDrwTexts.GetItem("main_text_28").Text = oParameters.Item("$companyName").ValueAsString
+					oDrwTexts.GetItem("top_text_1").Text = oParameters.Item("$objectCode").ValueAsString
+				End If
+
+				' MODEL FEATURES:
+				Dim dMass As Double
+				dMass = FormatNumber(oProductSourse.Analyze.Mass, 4)
+				If (dMass = 0.0000) Then
+					sMaterial = "undefined material"
+					sMass = CStr(dMass)
+					UserNotify 6
+				Else
+					sMaterial = oProductSourse.Parameters.Item("Material").ValueAsString
+					sMass = CStr(FormatNumber(dMass, 2))
+				End If
+
+				' WRITE MODEL FEATURES
+				' UPDATE TEXT "Масса"
+				oDrwTexts.GetItem("main_text_26").Text = sMass
+
+				' UPDATE TEXT "Материал"
+				oDrwTexts.GetItem("main_text_25").Text = sMaterial
+				Exit Sub
+			End If
+		Next
+		UserNotify 5
+	Else
+		UserNotify 4
+	End If
+End Sub
+
+
+'	BASIC METHODS - MoveMain
+' 	****************************************************************************
+'	Move main table on sheet dimension and/or orientation change - all items moves horizontal only
+' 	****************************************************************************
+Sub MoveMain(stepX As Double)
+	Dim oTargetLine		As Line2D
+	Dim lStepLines		As Long
+	Dim lTotalLines		As Long
+	Dim sLineName		As String
+	Dim aDirection(2)	As Array
+	Dim aOrigin(2)		As Array
+
+	Dim lTotalText		As Long
+	Dim lStepText		As Long
+	Dim oTargetText		As DrawingText
+
+	If (stepX = 0) Then
+		Exit Sub
+	End If
+
+	sLineName = "main_line_"
+	lTotalLines = 28	' = MAX ITEM NUMBER FOR TARGET LINES
+
+	For lStepLines = 1 To lTotalLines
+		Set oTargetLine = oGeomElements.Item("main_line_"&lStepLines)
+		oTargetLine.GetDirection(aDirection)
+		oTargetLine.GetOrigin(aOrigin)
+		oTargetLine.SetData aOrigin(0)+stepX, aOrigin(1), aDirection(0), aDirection(1)
+	Next
+
+	lTotalText = 28	' MUST BE = MAX ITEM NUMBER FOR TARGET TEXTS
+	For lStepText = 1 To  lTotalText
+		Set oTargetText = oDrwTexts.GetItem("main_text_"&lStepText)
+		oTargetText.x = oTargetText.x + stepX
+	Next
+
+End Sub
+
+
+'	BASIC METHODS - RedrawTop
+' 	****************************************************************************
+'	Redraw top table on sheet dimension and/or orientation change
+' 	****************************************************************************
+Sub RedrawTop()
+	Dim i		As Integer
+	Dim objLine	As Line2D
+
+	If (Not BackgroundIsEmpty()) Then
+
+	' REMOVE TOP LINES
+		oSelection.Clear
+		For i = 1 To 2
+			Set objLine = oGeomElements.Item("top_line_"&i)
+			oSelection.Add(objLine)
+		Next
+    	oSelection.Delete
+	End If
+	DrawTop
+End Sub
+
+
+'	BASIC METHODS - MoveTopText
+' 	****************************************************************************
+'	Move top text on sheet dimension and/or orientation change
+' 	****************************************************************************
+Sub MoveTopText()
+	Dim oTargetText	As DrawingText
+
+	' MOVE TOP TEXT
+	Set oTargetText = oDrwTexts.GetItem("top_text_1")
+	If (TopPositionMode() = 1) Then
+		oTargetText.x = 55 
+		oTargetText.y = dHeight - 12
+		oTargetText.Angle = 180
+	Else
+		oTargetText.x = dWidth - 12
+		oTargetText.y = dHeight - 40
+		oTargetText.Angle = 90
+	End If
+End Sub
+
+
+'	BASIC METHODS - RemoveAllText
+' 	****************************************************************************
+'	Remove all text objects from sheet
+' 	****************************************************************************
+Sub RemoveAllText()
+	Dim lTotalText	As Long
+	Dim lStep		As Long
+
+	lTotalText = oDrwTexts.Count
+	lStep = 0
+
+	While (lStep < lTotalText)
+		oDrwTexts.Remove(1)
+		lStep = lStep + 1
+	Wend
+	
+End Sub
+
+
+'	BASIC METHODS - RemoveGeometry
+' 	****************************************************************************
+'	Remove all geometry objects from sheet
+' 	****************************************************************************
+Sub RemoveGeometry()
+	Dim lTotalGeomElems	As Long
+	Dim lStep 			As Long
+	
+	oSelection.Clear
+	lTotalGeomElems = oGeomElements.Count
+	For lStep = 1 To lTotalGeomElems
+		oSelection.Add(oGeomElements.Item(lStep))
+	Next
+	oSelection.Delete
+End Sub
