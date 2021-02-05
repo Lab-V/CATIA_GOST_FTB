@@ -1,5 +1,5 @@
 ### CATIA(r) Frame Title Block CATScript according Russian Standards.
-##### This is a script that creates a frame title block in accordance with Russian drafting standards. Tested in V5R15 and V5R19 version.
+#### This is a script that creates a frame title block in accordance with Russian drafting standards. Tested in V5R15 and V5R19 version.
 
 Place these files "GOSTFTB2.CATScript" and "GOSTFTB2.bmp" in the following folder:
 
