@@ -7,6 +7,8 @@ Place these files "GOSTFTB2.CATScript" and "GOSTFTB2.bmp" in the following folde
 
 where XX - CATIA version number (B15, B19 etc).
 
+A small setup guide in Russian in the file "GOSTFTB2_descr_RU.pdf".
+
 ![Preview image](https://github.com/Lab-V/CATIA_GOST_FTB/blob/main/GOSTFTB2.png)
 
 You can find more examples on the forum:
